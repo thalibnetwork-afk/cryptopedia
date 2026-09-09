@@ -13,7 +13,7 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 
 if not all([BOT_TOKEN, CHAT_ID, GEMINI_KEY]):
-    raise ValueError("Variabel environment belum lengkap.")
+    raise ValueError("Variabel environment TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, atau GEMINI_API_KEY belum disetel.")
 
 ai_client = genai.Client(api_key=GEMINI_KEY)
 
@@ -46,7 +46,7 @@ def get_crypto_prices():
             return f"{btc_str}\n{eth_str}\n{sol_str}"
     except Exception as e:
         print("Gagal mengambil data harga CoinGecko:", e)
-    return "• Data harga pasar tidak tersedia"
+    return "• Data harga pasar sedang tidak tersedia"
 
 # 3. Ambil Data Resmi Crypto Fear & Greed Index
 raw_fng_value = 50
@@ -90,7 +90,7 @@ for entry in feed.entries[:20]:
         "link": entry.link
     })
 
-# 5. Prompt untuk Gemini Pro
+# 5. Analisis Cerdas Menggunakan Gemini Pro
 system_prompt = """
 Anda adalah Senior Crypto Quantitative & Sentiment Analyst berbahasa Indonesia.
 Tugas Anda:
@@ -102,10 +102,10 @@ Tugas Anda:
    - Identifikasi koin yang berkecenderungan MENGUAT (bias naik) beserta alasannya.
    - Identifikasi koin yang berkecenderungan WASPADA KOREKSI (bias turun) beserta alasannya.
 
-KEMBALIKAN HANYA JSON MURNI DENGAN STRUKTUR PERSIS SEPERTI INI:
+KEMBALIKAN HANYA FORMAT JSON VALID:
 {
   "overall_bias": "BULLISH / BEARISH / NETRAL",
-  "macro_synthesis": "Teks sintesis analisis pasar",
+  "macro_synthesis": "Teks sintesis kondisi pasar",
   "top_market_movers": [
     {
       "title_id": "Judul berita bahasa Indonesia",
@@ -149,15 +149,13 @@ response = ai_client.models.generate_content(
     ),
 )
 
-print("Raw LLM Output:", response.text)
-
 try:
     analysis = json.loads(response.text)
 except Exception as e:
     print("Gagal parse JSON LLM:", e)
     analysis = {}
 
-# 6. Susun Format Pesan Telegram (dengan Sanitasi HTML)
+# 6. Susun Pesan Telegram
 def safe_html(text: str) -> str:
     return html.escape(str(text)) if text else ""
 
@@ -168,7 +166,7 @@ bias_badge = {
     "NETRAL": "⚪ NETRAL"
 }.get(bias_raw, "⚪ NETRAL")
 
-macro_text = safe_html(analysis.get("macro_synthesis", "Analisis sedang dikalkulasi."))
+macro_text = safe_html(analysis.get("macro_synthesis", "Analisis pasar sedang diperbarui."))
 
 lines = [
     "🧠 <b>GEMINI PRO: CRYPTO INTELLIGENCE</b>",
@@ -216,20 +214,18 @@ for idx, item in enumerate(analysis.get("top_market_movers", [])[:3], 1):
 lines.append("━━━━━━━━━━━━━━━━━━━━━━")
 lines.append("⚠️ <i>Disclaimer: Analisis probabilitas berbasis sentimen, bukan saran finansial mutlak.</i>")
 
-final_payload = "\n".join(lines)
-
 # 7. Kirim Notifikasi ke Telegram
 resp = requests.post(
     f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
     json={
         "chat_id": CHAT_ID,
-        "text": final_payload,
+        "text": "\n".join(lines),
         "parse_mode": "HTML",
         "disable_web_page_preview": True
     },
     timeout=20
 )
 
-print("Status Pengiriman:", resp.status_code)
+print("Status Pengiriman Telegram:", resp.status_code)
 if resp.status_code != 200:
-    print("Error Response Telegram:", resp.text)
+    print("Telegram Error Response:", resp.text)
