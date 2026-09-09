@@ -16,16 +16,49 @@ if not all([BOT_TOKEN, CHAT_ID, GEMINI_KEY]):
 
 ai_client = genai.Client(api_key=GEMINI_KEY)
 
-# 2. Ambil Data Resmi Crypto Fear & Greed Index
+# 2. Ambil Harga Live & Perubahan 24 Jam dari CoinGecko
+raw_market_prices = {}
+
+def get_crypto_prices():
+    global raw_market_prices
+    try:
+        url = "https://api.coingecko.com/api/v3/simple/price"
+        params = {
+            "ids": "bitcoin,ethereum,solana",
+            "vs_currencies": "usd",
+            "include_24hr_change": "true"
+        }
+        res = requests.get(url, params=params, timeout=10)
+        if res.status_code == 200:
+            raw_market_prices = res.json()
+            
+            def format_coin(name, ticker):
+                price = raw_market_prices[name]["usd"]
+                change = raw_market_prices[name]["usd_24h_change"]
+                icon = "🟢" if change >= 0 else "🔴"
+                return f"• <b>{ticker}:</b> ${price:,.2f} ({icon} {change:+.2f}%)"
+
+            btc_str = format_coin("bitcoin", "BTC")
+            eth_str = format_coin("ethereum", "ETH")
+            sol_str = format_coin("solana", "SOL")
+            
+            return f"{btc_str}\n{eth_str}\n{sol_str}"
+    except Exception as e:
+        print("Gagal mengambil data harga CoinGecko:", e)
+    return "• Harga pasar: Gagal memuat data"
+
+# 3. Ambil Data Resmi Crypto Fear & Greed Index
+raw_fng_value = 50
+
 def get_fear_and_greed():
+    global raw_fng_value
     try:
         res = requests.get("https://api.alternative.me/fng/?limit=1", timeout=5)
         if res.status_code == 200:
             data = res.json()["data"][0]
             val = int(data["value"])
-            status = data["value_classification"]
+            raw_fng_value = val
 
-            # Visualisasi badge berdasarkan angka
             if val >= 75:
                 badge = f"🔥 Extreme Greed ({val}/100)"
             elif val >= 55:
@@ -41,9 +74,10 @@ def get_fear_and_greed():
         print("Gagal mengambil Fear & Greed Index:", e)
     return "N/A"
 
+prices_header = get_crypto_prices()
 fng_status = get_fear_and_greed()
 
-# 3. Ambil 20 Berita Terbaru dari RSS Feed
+# 4. Ambil 20 Berita Terbaru dari RSS Feed
 feed_url = "https://cointelegraph.com/rss"
 feed = feedparser.parse(feed_url)
 raw_articles = []
@@ -55,21 +89,27 @@ for entry in feed.entries[:20]:
         "link": entry.link
     })
 
-# 4. Prompt Khusus untuk Gemini Pro
+# 5. Prompt untuk Gemini Pro (Analisis Makro + Radar Peluang)
 system_prompt = """
-Anda adalah Senior Crypto Research Analyst berbahasa Indonesia.
+Anda adalah Senior Crypto Quantitative & Sentiment Analyst berbahasa Indonesia.
 Tugas Anda:
-1. Baca dan cerna seluruh 20 berita kripto terkini yang diberikan.
+1. Baca 20 artikel berita, data momentum harga 24 jam, dan Fear & Greed Index yang diberikan.
 2. Identifikasi sentimen pasar secara keseluruhan (BULLISH, BEARISH, atau NETRAL).
 3. Buat sintesis singkat kondisi pasar dalam 2-3 kalimat tajam berbahasa Indonesia.
-4. Pilih 4 berita PALING berdampak (Top Movers) terhadap pergerakan aset kripto.
-5. Terjemahkan judulnya dan jelaskan alasannya secara padat ke Bahasa Indonesia.
+4. Pilih 3 berita PALING berdampak (Top Movers) terhadap pergerakan pasar.
+5. Susun "Radar Probabilitas Aset":
+   - Tentukan koin yang memiliki kecenderungan/bias MENGUAT (potensi naik) berdasarkan kombinasi berita positif, momentum harga, atau akumulasi.
+   - Tentukan koin yang memiliki kecenderungan/bias MELEMAH / WASPADA (potensi koreksi) berdasarkan tekanan jual, isu hukum, eksploitasi, atau kejenuhan pasar.
+   - Sertakan alasan logis 1 kalimat untuk setiap koin.
 
-Hasilkan HANYA JSON valid sesuai skema yang diminta tanpa format markdown tambahan.
+Hasilkan HANYA JSON valid tanpa format markdown pembuka/penutup.
 """
 
 payload_prompt = f"""
-Berikut adalah 20 artikel pasar kripto terbaru:
+Data Konteks Pasar:
+- Harga & Perubahan 24h: {json.dumps(raw_market_prices)}
+- Fear & Greed Score: {raw_fng_value}/100
+- 20 Artikel Berita:
 {json.dumps(raw_articles, indent=2)}
 
 Format JSON yang diharapkan:
@@ -83,7 +123,21 @@ Format JSON yang diharapkan:
       "impact_reason": "Alasan singkat mengapa berita ini berdampak tinggi",
       "link": "link asli dari data input"
     }}
-  ]
+  ],
+  "asset_radar": {{
+    "bullish_bias": [
+      {{
+        "coin": "TICKER (contoh: BTC, SOL)",
+        "reason": "Alasan probabilitas bias menguat"
+      }}
+    ],
+    "bearish_bias": [
+      {{
+        "coin": "TICKER (contoh: ETH, dll)",
+        "reason": "Alasan probabilitas waspada/bias koreksi"
+      }}
+    ]
+  }}
 }}
 """
 
@@ -99,7 +153,7 @@ response = ai_client.models.generate_content(
 
 analysis = json.loads(response.text)
 
-# 5. Susun Format Pesan Telegram
+# 6. Susun Format Pesan Telegram
 bias_badge = {
     "BULLISH": "🟢 BULLISH",
     "BEARISH": "🔴 BEARISH",
@@ -109,27 +163,47 @@ bias_badge = {
 lines = [
     "🧠 <b>GEMINI PRO: CRYPTO INTELLIGENCE</b>",
     f"📅 <i>Pembaruan: {datetime.now().strftime('%d-%m-%Y %H:%M')} WIB</i>",
+    "━━━━━━━━━━━━━━━━━━━━━━",
+    "💵 <b>HARGA PASAR (24H):</b>",
+    prices_header,
+    "━━━━━━━━━━━━━━━━━━━━━━",
     f"🎭 <b>Fear & Greed Index:</b> <code>{fng_status}</code>",
-    f"📊 <b>Sentimen Berita:</b> {bias_badge}",
-    f"📰 <i>Volume Dianalisis: 20 Berita Terkini</i>",
+    f"📊 <b>Sentimen Pasar:</b> {bias_badge}",
     "━━━━━━━━━━━━━━━━━━━━━━\n",
-    "📌 <b>Rangkuman Eksekutif Pasar:</b>",
+    "📌 <b>Rangkuman Eksekutif:</b>",
     f"<i>{analysis.get('macro_synthesis', '')}</i>\n",
-    "🔥 <b>Faktor Penggerak Utama (Top Movers):</b>"
+    "🎯 <b>RADAR PROBABILITAS KOIN:</b>"
 ]
 
-for idx, item in enumerate(analysis.get("top_market_movers", []), 1):
+radar = analysis.get("asset_radar", {})
+bull_list = radar.get("bullish_bias", [])
+bear_list = radar.get("bearish_bias", [])
+
+if bull_list:
+    lines.append("🟢 <b>Kecenderungan Menguat (Bias Naik):</b>")
+    for item in bull_list:
+        lines.append(f"• <b>{item['coin']}:</b> {item['reason']}")
+    lines.append("")
+
+if bear_list:
+    lines.append("🔴 <b>Waspada Koreksi (Bias Turun):</b>")
+    for item in bear_list:
+        lines.append(f"• <b>{item['coin']}:</b> {item['reason']}")
+    lines.append("")
+
+lines.append("🔥 <b>Faktor Penggerak Pasar (Top Movers):</b>")
+for idx, item in enumerate(analysis.get("top_market_movers", [])[:3], 1):
     tag = "🟢" if item["sentiment"] == "BULLISH" else ("🔴" if item["sentiment"] == "BEARISH" else "⚪")
     lines.append(
-        f"\n{idx}. {tag} <b>{item['title_id']}</b>\n"
+        f"{idx}. {tag} <b>{item['title_id']}</b>\n"
         f"   └ <i>{item['impact_reason']}</i>\n"
-        f"   └ 🔗 <a href='{item['link']}'>Baca Berita Asli</a>"
+        f"   └ 🔗 <a href='{item['link']}'>Baca Sumber</a>\n"
     )
 
-lines.append("\n━━━━━━━━━━━━━━━━━━━━━━")
-lines.append("💡 <i>Kombinasi analisis 20 berita via Gemini Pro + On-chain Sentiment</i>")
+lines.append("━━━━━━━━━━━━━━━━━━━━━━")
+lines.append("⚠️ <i>Disclaimer: Radar probabilitas berbasis sentimen & momentum, bukan saran finansial mutlak.</i>")
 
-# 6. Kirim ke Telegram
+# 7. Kirim Notifikasi ke Telegram
 resp = requests.post(
     f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
     json={
