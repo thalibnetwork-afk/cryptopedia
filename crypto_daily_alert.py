@@ -16,12 +16,38 @@ if not all([BOT_TOKEN, CHAT_ID, GEMINI_KEY]):
 
 ai_client = genai.Client(api_key=GEMINI_KEY)
 
-# 2. Ambil 20 Berita Terbaru dari RSS Feed
+# 2. Ambil Data Resmi Crypto Fear & Greed Index
+def get_fear_and_greed():
+    try:
+        res = requests.get("https://api.alternative.me/fng/?limit=1", timeout=5)
+        if res.status_code == 200:
+            data = res.json()["data"][0]
+            val = int(data["value"])
+            status = data["value_classification"]
+
+            # Visualisasi badge berdasarkan angka
+            if val >= 75:
+                badge = f"🔥 Extreme Greed ({val}/100)"
+            elif val >= 55:
+                badge = f"🟢 Greed ({val}/100)"
+            elif val <= 25:
+                badge = f"🩸 Extreme Fear ({val}/100)"
+            elif val <= 45:
+                badge = f"🔴 Fear ({val}/100)"
+            else:
+                badge = f"⚪ Neutral ({val}/100)"
+            return badge
+    except Exception as e:
+        print("Gagal mengambil Fear & Greed Index:", e)
+    return "N/A"
+
+fng_status = get_fear_and_greed()
+
+# 3. Ambil 20 Berita Terbaru dari RSS Feed
 feed_url = "https://cointelegraph.com/rss"
 feed = feedparser.parse(feed_url)
 raw_articles = []
 
-# Tingkatkan kuota menjadi 20 artikel
 for entry in feed.entries[:20]:
     raw_articles.append({
         "title": entry.title,
@@ -29,17 +55,17 @@ for entry in feed.entries[:20]:
         "link": entry.link
     })
 
-# 3. Prompt Khusus untuk Gemini Pro (Analisis Makro & Kurasi)
+# 4. Prompt Khusus untuk Gemini Pro
 system_prompt = """
-Anda adalah Senior Crypto Research Analyst.
+Anda adalah Senior Crypto Research Analyst berbahasa Indonesia.
 Tugas Anda:
 1. Baca dan cerna seluruh 20 berita kripto terkini yang diberikan.
-2. Identifikasi narasi makro dan tentukan sentimen pasar secara keseluruhan (BULLISH, BEARISH, atau NETRAL).
+2. Identifikasi sentimen pasar secara keseluruhan (BULLISH, BEARISH, atau NETRAL).
 3. Buat sintesis singkat kondisi pasar dalam 2-3 kalimat tajam berbahasa Indonesia.
-4. Pilih 4 berita PALING berdampak (High Impact Movers) terhadap volatilitas dan tren harga kripto.
-5. Terjemahkan judulnya dan jelaskan dampaknya secara padat ke Bahasa Indonesia.
+4. Pilih 4 berita PALING berdampak (Top Movers) terhadap pergerakan aset kripto.
+5. Terjemahkan judulnya dan jelaskan alasannya secara padat ke Bahasa Indonesia.
 
-Hasilkan HANYA JSON valid sesuai skema yang diminta tanpa markdown pembuka/penutup.
+Hasilkan HANYA JSON valid sesuai skema yang diminta tanpa format markdown tambahan.
 """
 
 payload_prompt = f"""
@@ -49,7 +75,7 @@ Berikut adalah 20 artikel pasar kripto terbaru:
 Format JSON yang diharapkan:
 {{
   "overall_bias": "BULLISH / BEARISH / NETRAL",
-  "macro_synthesis": "Ringkasan analisis pasar 2-3 kalimat berbahasa Indonesia.",
+  "macro_synthesis": "Ringkasan analisis kondisi pasar 2-3 kalimat berbahasa Indonesia.",
   "top_market_movers": [
     {{
       "title_id": "Judul berita dalam Bahasa Indonesia",
@@ -61,7 +87,6 @@ Format JSON yang diharapkan:
 }}
 """
 
-# 4. Eksekusi Model Gemini Pro
 response = ai_client.models.generate_content(
     model="gemini-2.5-pro",
     contents=payload_prompt,
@@ -74,7 +99,7 @@ response = ai_client.models.generate_content(
 
 analysis = json.loads(response.text)
 
-# 5. Format Tampilan Pesan Telegram
+# 5. Susun Format Pesan Telegram
 bias_badge = {
     "BULLISH": "🟢 BULLISH",
     "BEARISH": "🔴 BEARISH",
@@ -84,7 +109,8 @@ bias_badge = {
 lines = [
     "🧠 <b>GEMINI PRO: CRYPTO INTELLIGENCE</b>",
     f"📅 <i>Pembaruan: {datetime.now().strftime('%d-%m-%Y %H:%M')} WIB</i>",
-    f"📊 <b>Sentimen Pasar: {bias_badge}</b>",
+    f"🎭 <b>Fear & Greed Index:</b> <code>{fng_status}</code>",
+    f"📊 <b>Sentimen Berita:</b> {bias_badge}",
     f"📰 <i>Volume Dianalisis: 20 Berita Terkini</i>",
     "━━━━━━━━━━━━━━━━━━━━━━\n",
     "📌 <b>Rangkuman Eksekutif Pasar:</b>",
@@ -101,7 +127,7 @@ for idx, item in enumerate(analysis.get("top_market_movers", []), 1):
     )
 
 lines.append("\n━━━━━━━━━━━━━━━━━━━━━━")
-lines.append("💡 <i>Sintesis cerdas disaring dari 20 artikel menggunakan Gemini Pro</i>")
+lines.append("💡 <i>Kombinasi analisis 20 berita via Gemini Pro + On-chain Sentiment</i>")
 
 # 6. Kirim ke Telegram
 resp = requests.post(
