@@ -1,5 +1,6 @@
 import os
 import json
+import html
 import feedparser
 import requests
 from datetime import datetime
@@ -45,7 +46,7 @@ def get_crypto_prices():
             return f"{btc_str}\n{eth_str}\n{sol_str}"
     except Exception as e:
         print("Gagal mengambil data harga CoinGecko:", e)
-    return "• Harga pasar: Gagal memuat data"
+    return "• Data harga pasar tidak tersedia"
 
 # 3. Ambil Data Resmi Crypto Fear & Greed Index
 raw_fng_value = 50
@@ -89,56 +90,53 @@ for entry in feed.entries[:20]:
         "link": entry.link
     })
 
-# 5. Prompt untuk Gemini Pro (Analisis Makro + Radar Peluang)
+# 5. Prompt untuk Gemini Pro
 system_prompt = """
 Anda adalah Senior Crypto Quantitative & Sentiment Analyst berbahasa Indonesia.
 Tugas Anda:
-1. Baca 20 artikel berita, data momentum harga 24 jam, dan Fear & Greed Index yang diberikan.
-2. Identifikasi sentimen pasar secara keseluruhan (BULLISH, BEARISH, atau NETRAL).
-3. Buat sintesis singkat kondisi pasar dalam 2-3 kalimat tajam berbahasa Indonesia.
-4. Pilih 3 berita PALING berdampak (Top Movers) terhadap pergerakan pasar.
-5. Susun "Radar Probabilitas Aset":
-   - Tentukan koin yang memiliki kecenderungan/bias MENGUAT (potensi naik) berdasarkan kombinasi berita positif, momentum harga, atau akumulasi.
-   - Tentukan koin yang memiliki kecenderungan/bias MELEMAH / WASPADA (potensi koreksi) berdasarkan tekanan jual, isu hukum, eksploitasi, atau kejenuhan pasar.
-   - Sertakan alasan logis 1 kalimat untuk setiap koin.
+1. Analisis 20 artikel berita, momentum harga 24 jam, dan Fear & Greed Index yang diberikan.
+2. Tentukan sentimen pasar secara keseluruhan: BULLISH, BEARISH, atau NETRAL.
+3. Tulis sintesis kondisi pasar 2-3 kalimat tajam berbahasa Indonesia.
+4. Pilih 3 berita PALING berdampak (Top Movers). Terjemahkan judulnya dan berikan alasan dampaknya dalam bahasa Indonesia.
+5. Susun Radar Probabilitas:
+   - Identifikasi koin yang berkecenderungan MENGUAT (bias naik) beserta alasannya.
+   - Identifikasi koin yang berkecenderungan WASPADA KOREKSI (bias turun) beserta alasannya.
 
-Hasilkan HANYA JSON valid tanpa format markdown pembuka/penutup.
+KEMBALIKAN HANYA JSON MURNI DENGAN STRUKTUR PERSIS SEPERTI INI:
+{
+  "overall_bias": "BULLISH / BEARISH / NETRAL",
+  "macro_synthesis": "Teks sintesis analisis pasar",
+  "top_market_movers": [
+    {
+      "title_id": "Judul berita bahasa Indonesia",
+      "sentiment": "BULLISH / BEARISH / NETRAL",
+      "impact_reason": "Alasan dampak",
+      "link": "url"
+    }
+  ],
+  "asset_radar": {
+    "bullish_bias": [
+      {
+        "coin": "BTC",
+        "reason": "Alasan bias naik"
+      }
+    ],
+    "bearish_bias": [
+      {
+        "coin": "ETH",
+        "reason": "Alasan bias turun"
+      }
+    ]
+  }
+}
 """
 
 payload_prompt = f"""
-Data Konteks Pasar:
-- Harga & Perubahan 24h: {json.dumps(raw_market_prices)}
-- Fear & Greed Score: {raw_fng_value}/100
-- 20 Artikel Berita:
+Data Konteks:
+- Momentum Harga 24h: {json.dumps(raw_market_prices)}
+- Fear & Greed Index: {raw_fng_value}/100
+- 20 Berita Terkini:
 {json.dumps(raw_articles, indent=2)}
-
-Format JSON yang diharapkan:
-{{
-  "overall_bias": "BULLISH / BEARISH / NETRAL",
-  "macro_synthesis": "Ringkasan analisis kondisi pasar 2-3 kalimat berbahasa Indonesia.",
-  "top_market_movers": [
-    {{
-      "title_id": "Judul berita dalam Bahasa Indonesia",
-      "sentiment": "BULLISH / BEARISH / NETRAL",
-      "impact_reason": "Alasan singkat mengapa berita ini berdampak tinggi",
-      "link": "link asli dari data input"
-    }}
-  ],
-  "asset_radar": {{
-    "bullish_bias": [
-      {{
-        "coin": "TICKER (contoh: BTC, SOL)",
-        "reason": "Alasan probabilitas bias menguat"
-      }}
-    ],
-    "bearish_bias": [
-      {{
-        "coin": "TICKER (contoh: ETH, dll)",
-        "reason": "Alasan probabilitas waspada/bias koreksi"
-      }}
-    ]
-  }}
-}}
 """
 
 response = ai_client.models.generate_content(
@@ -151,14 +149,26 @@ response = ai_client.models.generate_content(
     ),
 )
 
-analysis = json.loads(response.text)
+print("Raw LLM Output:", response.text)
 
-# 6. Susun Format Pesan Telegram
+try:
+    analysis = json.loads(response.text)
+except Exception as e:
+    print("Gagal parse JSON LLM:", e)
+    analysis = {}
+
+# 6. Susun Format Pesan Telegram (dengan Sanitasi HTML)
+def safe_html(text: str) -> str:
+    return html.escape(str(text)) if text else ""
+
+bias_raw = analysis.get("overall_bias", "NETRAL").upper()
 bias_badge = {
     "BULLISH": "🟢 BULLISH",
     "BEARISH": "🔴 BEARISH",
     "NETRAL": "⚪ NETRAL"
-}.get(analysis.get("overall_bias", "NETRAL"), "⚪ NETRAL")
+}.get(bias_raw, "⚪ NETRAL")
+
+macro_text = safe_html(analysis.get("macro_synthesis", "Analisis sedang dikalkulasi."))
 
 lines = [
     "🧠 <b>GEMINI PRO: CRYPTO INTELLIGENCE</b>",
@@ -171,7 +181,7 @@ lines = [
     f"📊 <b>Sentimen Pasar:</b> {bias_badge}",
     "━━━━━━━━━━━━━━━━━━━━━━\n",
     "📌 <b>Rangkuman Eksekutif:</b>",
-    f"<i>{analysis.get('macro_synthesis', '')}</i>\n",
+    f"<i>{macro_text}</i>\n",
     "🎯 <b>RADAR PROBABILITAS KOIN:</b>"
 ]
 
@@ -182,33 +192,38 @@ bear_list = radar.get("bearish_bias", [])
 if bull_list:
     lines.append("🟢 <b>Kecenderungan Menguat (Bias Naik):</b>")
     for item in bull_list:
-        lines.append(f"• <b>{item['coin']}:</b> {item['reason']}")
+        lines.append(f"• <b>{safe_html(item.get('coin'))}:</b> {safe_html(item.get('reason'))}")
     lines.append("")
 
 if bear_list:
     lines.append("🔴 <b>Waspada Koreksi (Bias Turun):</b>")
     for item in bear_list:
-        lines.append(f"• <b>{item['coin']}:</b> {item['reason']}")
+        lines.append(f"• <b>{safe_html(item.get('coin'))}:</b> {safe_html(item.get('reason'))}")
     lines.append("")
 
 lines.append("🔥 <b>Faktor Penggerak Pasar (Top Movers):</b>")
 for idx, item in enumerate(analysis.get("top_market_movers", [])[:3], 1):
-    tag = "🟢" if item["sentiment"] == "BULLISH" else ("🔴" if item["sentiment"] == "BEARISH" else "⚪")
+    tag = "🟢" if item.get("sentiment") == "BULLISH" else ("🔴" if item.get("sentiment") == "BEARISH" else "⚪")
+    title_clean = safe_html(item.get("title_id", "Berita Kripto"))
+    reason_clean = safe_html(item.get("impact_reason", ""))
+    link_url = item.get("link", "#")
     lines.append(
-        f"{idx}. {tag} <b>{item['title_id']}</b>\n"
-        f"   └ <i>{item['impact_reason']}</i>\n"
-        f"   └ 🔗 <a href='{item['link']}'>Baca Sumber</a>\n"
+        f"{idx}. {tag} <b>{title_clean}</b>\n"
+        f"   └ <i>{reason_clean}</i>\n"
+        f"   └ 🔗 <a href='{link_url}'>Baca Sumber</a>\n"
     )
 
 lines.append("━━━━━━━━━━━━━━━━━━━━━━")
-lines.append("⚠️ <i>Disclaimer: Radar probabilitas berbasis sentimen & momentum, bukan saran finansial mutlak.</i>")
+lines.append("⚠️ <i>Disclaimer: Analisis probabilitas berbasis sentimen, bukan saran finansial mutlak.</i>")
+
+final_payload = "\n".join(lines)
 
 # 7. Kirim Notifikasi ke Telegram
 resp = requests.post(
     f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
     json={
         "chat_id": CHAT_ID,
-        "text": "\n".join(lines),
+        "text": final_payload,
         "parse_mode": "HTML",
         "disable_web_page_preview": True
     },
@@ -216,3 +231,5 @@ resp = requests.post(
 )
 
 print("Status Pengiriman:", resp.status_code)
+if resp.status_code != 200:
+    print("Error Response Telegram:", resp.text)
