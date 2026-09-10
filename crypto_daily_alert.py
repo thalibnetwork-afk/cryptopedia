@@ -107,7 +107,7 @@ Tugas Anda:
    - Jelaskan alasan potensi & narasi hype-nya dalam 1 kalimat padat.
 4. Pilih 3 Berita Penggerak Pasar Terbesar (Top Movers).
 
-KEMBALIKAN HANYA FORMAT JSON VALID:
+KEMBALIKAN HANYA FORMAT JSON VALID TANPA FORMAT MARKDOWN LAIN:
 {{
   "overall_bias": "BULLISH / BEARISH / NETRAL",
   "macro_synthesis": "Ringkasan analisis pasar berbahasa Indonesia.",
@@ -186,7 +186,7 @@ lines.append("\n🔥 <b>Faktor Penggerak Pasar (Top Movers):</b>")
 for idx, it in enumerate(data.get("top_market_movers", [])[:3], 1):
     lines.append(f"{idx}. <b>{safe(it.get('title_id'))}</b>\n   └ <i>{safe(it.get('impact_reason'))}</i>\n   └ 🔗 <a href='{it.get('link')}'>Sumber</a>")
 
-lines.append("\n━━━━━━━━━━━━━━━━━━━━━━\n⚠️ <i>Radar probabilitas berbasis sentimen & momentum, bukan anjuran finansial mutlak.</i>")
+lines.append("\n━━━━━━━━━━━━━━━━━━━━━━\n⚠️ <i>Radar probabilitas berbasis data sentimen, bukan anjuran finansial mutlak.</i>")
 
 telegram_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 res = requests.post(
