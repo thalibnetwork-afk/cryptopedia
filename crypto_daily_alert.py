@@ -8,7 +8,6 @@ from datetime import datetime
 from google import genai
 from google.genai import types
 
-# 1. Kredensial Environment
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
@@ -18,7 +17,7 @@ if not all([BOT_TOKEN, CHAT_ID, GEMINI_KEY]):
 
 ai_client = genai.Client(api_key=GEMINI_KEY)
 
-# 2. Ambil Harga Live Pasar (BTC, ETH, SOL)
+# 1. Ambil Harga Live Pasar
 raw_market_prices = {}
 def get_crypto_prices():
     global raw_market_prices
@@ -36,10 +35,10 @@ def get_crypto_prices():
                 return f"• <b>{t}:</b> ${p:,.2f} ({ic} {chg:+.2f}%)"
             return f"{fmt('bitcoin', 'BTC')}\n{fmt('ethereum', 'ETH')}\n{fmt('solana', 'SOL')}"
     except Exception as e:
-        print("[CoinGecko Price Error]:", e)
+        print("[CoinGecko Error]:", e)
     return "• Data harga pasar tidak tersedia"
 
-# 3. Ambil Koin Trending (CoinGecko Trending)
+# 2. Ambil Koin Trending
 raw_trending_coins = []
 def get_trending_coins():
     global raw_trending_coins
@@ -50,16 +49,12 @@ def get_trending_coins():
         if res.status_code == 200:
             items = res.json().get("coins", [])[:5]
             for it in items:
-                coin_data = it.get("item", {})
-                raw_trending_coins.append({
-                    "name": coin_data.get("name"),
-                    "symbol": coin_data.get("symbol"),
-                    "market_cap_rank": coin_data.get("market_cap_rank")
-                })
+                c = it.get("item", {})
+                raw_trending_coins.append({"name": c.get("name"), "symbol": c.get("symbol")})
     except Exception as e:
-        print("[CoinGecko Trending Error]:", e)
+        print("[Trending Error]:", e)
 
-# 4. Ambil Fear & Greed Index
+# 3. Ambil Fear & Greed Index
 raw_fng_value = 50
 def get_fear_and_greed():
     global raw_fng_value
@@ -76,38 +71,27 @@ def get_fear_and_greed():
             if val <= 45: return f"🔴 Fear ({val}/100)"
             return f"⚪ Neutral ({val}/100)"
     except Exception as e:
-        print("[Fear&Greed Error]:", e)
+        print("[FnG Error]:", e)
     return "N/A"
 
 prices_header = get_crypto_prices()
 get_trending_coins()
 fng_status = get_fear_and_greed()
 
-# 5. Tarik 20 Berita Cointelegraph RSS
+# 4. Tarik 20 Berita
 feed = feedparser.parse("https://cointelegraph.com/rss")
-raw_articles = [
-    {"title": e.title, "summary": e.get("summary", "")[:250], "link": e.link}
-    for e in feed.entries[:20]
-]
+raw_articles = [{"title": e.title, "summary": e.get("summary", "")[:250], "link": e.link} for e in feed.entries[:20]]
 
-# 6. Analisis Menggunakan Gemini 3.6 Flash
+# 5. Analisis Gemini 3.6 Flash
 prompt = f"""
-Anda adalah Senior Crypto Quantitative & Sentiment Analyst berbahasa Indonesia.
+Anda adalah Senior Crypto Analyst berbahasa Indonesia.
 Analisis data berikut:
 - Harga 24h: {json.dumps(raw_market_prices)}
-- Fear & Greed Index: {raw_fng_value}/100
-- Daftar Koin Trending Populer: {json.dumps(raw_trending_coins)}
-- 20 Berita Kripto Terkini: {json.dumps(raw_articles, indent=2)}
+- Fear & Greed: {raw_fng_value}/100
+- Koin Trending: {json.dumps(raw_trending_coins)}
+- 20 Berita Kripto: {json.dumps(raw_articles, indent=2)}
 
-Tugas Anda:
-1. Berikan sentimen pasar umum (BULLISH/BEARISH/NETRAL) dan ringkasan eksekutif makro (2-3 kalimat).
-2. Susun RADAR PROBABILITAS KOIN UTAMA (bias naik vs waspada koreksi).
-3. Analisis KOIN TRENDING (emerging gems):
-   - Pilih 2 koin trending yang memiliki katalis/potensi sentimen positif terkuat untuk naik.
-   - Jelaskan alasan potensi & narasi hype-nya dalam 1 kalimat padat.
-4. Pilih 3 Berita Penggerak Pasar Terbesar (Top Movers).
-
-KEMBALIKAN HANYA FORMAT JSON VALID TANPA FORMAT MARKDOWN LAIN:
+KEMBALIKAN HANYA FORMAT JSON VALID:
 {{
   "overall_bias": "BULLISH / BEARISH / NETRAL",
   "macro_synthesis": "Ringkasan analisis pasar berbahasa Indonesia.",
@@ -116,10 +100,7 @@ KEMBALIKAN HANYA FORMAT JSON VALID TANPA FORMAT MARKDOWN LAIN:
     "bearish_bias": [{{"coin": "TICKER", "reason": "alasan waspada"}}]
   }},
   "trending_gems": [
-    {{
-      "coin": "NAMA_KOIN (TICKER)",
-      "potential": "Alasan potensi naik berdasarkan narasi sentimen atau hype komunitas"
-    }}
+    {{"coin": "NAMA_KOIN (TICKER)", "potential": "Alasan potensi naik"}}
   ],
   "top_market_movers": [
     {{"title_id": "Judul bahasa Indonesia", "sentiment": "BULLISH/BEARISH/NETRAL", "impact_reason": "Alasan dampak", "link": "url"}}
@@ -127,30 +108,22 @@ KEMBALIKAN HANYA FORMAT JSON VALID TANPA FORMAT MARKDOWN LAIN:
 }}
 """
 
-# Eksekusi AI dengan Penanganan Retry (Anti-503)
 data = {}
 for attempt in range(1, 4):
     try:
-        print(f"Mengirim permintaan ke Gemini (Percobaan ke-{attempt})...")
         resp = ai_client.models.generate_content(
             model="gemini-3.6-flash",
             contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                temperature=0.2,
-            ),
+            config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2),
         )
         data = json.loads(resp.text)
-        print("Analisis AI berhasil diterima.")
         break
     except Exception as e:
-        print(f"Percobaan {attempt} gagal ({e}). Menunggu 5 detik...")
         time.sleep(5)
 
 if not data:
-    raise RuntimeError("Gagal mendapatkan analisis dari Gemini.")
+    raise RuntimeError("Gagal memproses analisis Gemini.")
 
-# 7. Susun Format Pesan Telegram
 def safe(t): return html.escape(str(t)) if t else ""
 bias_raw = data.get("overall_bias", "NETRAL").upper()
 bias_badge = {"BULLISH": "🟢 BULLISH", "BEARISH": "🔴 BEARISH"}.get(bias_raw, "⚪ NETRAL")
@@ -178,7 +151,7 @@ for b in radar.get("bearish_bias", []):
 
 gems = data.get("trending_gems", [])
 if gems:
-    lines.append("\n💎 <b>RADAR KOIN TRENDING & POTENSIAL (High Risk/Hype):</b>")
+    lines.append("\n💎 <b>RADAR KOIN TRENDING & POTENSIAL:</b>")
     for g in gems:
         lines.append(f"⚡ <b>{safe(g.get('coin'))}:</b> {safe(g.get('potential'))}")
 
@@ -194,7 +167,4 @@ res = requests.post(
     json={"chat_id": CHAT_ID, "text": "\n".join(lines), "parse_mode": "HTML", "disable_web_page_preview": True},
     timeout=20
 )
-
-print(f"Status Pengiriman Telegram: {res.status_code}")
-if res.status_code != 200:
-    print("Gagal:", res.text)
+print("Status Telegram:", res.status_code)
