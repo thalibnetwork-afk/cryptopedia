@@ -2,8 +2,8 @@ name: Daily Crypto Sentiment Alert
 
 on:
   schedule:
-    # 00:00 UTC = 14:16 WITA
-    - cron: '0 0 * * *'
+    # 06:30 UTC = 14:20 WITA
+    - cron: '30 6 * * *'
   workflow_dispatch:
 
 jobs:
