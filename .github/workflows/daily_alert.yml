@@ -2,12 +2,12 @@ name: Daily Crypto Sentiment Alert
 
 on:
   schedule:
-    # Eksekusi 4x sehari (WITA = UTC+8):
-    # 22:00 UTC = 06:00 WITA (pagi)
-    # 04:00 UTC = 12:00 WITA (siang)
-    # 10:00 UTC = 18:00 WITA (sore)
-    # 16:00 UTC = 00:00 WITA (malam)
-    - cron: '0 22,4,10,16 * * *'
+    # 4 kali sehari (WITA = UTC+8):
+    # 21:55 UTC = ~05:55 / 06:00 WITA (pagi)
+    # 03:55 UTC = ~11:55 / 12:00 WITA (siang)
+    # 09:55 UTC = ~17:55 / 18:00 WITA (sore)
+    # 15:55 UTC = ~23:55 / 00:00 WITA (malam)
+    - cron: '55 21,3,9,15 * * *'
   workflow_dispatch:
 
 jobs:
